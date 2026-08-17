@@ -30,6 +30,7 @@ divided by accelerated time.
 | Multithreaded CLI default | Primarily lossy complete CLI | **1.04-1.08x** representative | Bitstream exact |
 | NEON intra4 prediction | Lossy complete CLI | **1.004-1.024x** | Bitstream exact |
 | NEON intra16 prediction | Lossy complete CLI | **1.002-1.012x** | Bitstream exact |
+| NEON WHT quantization | Lossy complete CLI | **1.000-1.015x** | Bitstream exact |
 | Reduced trellis scoring work | Lossy method-6 CLI | **1.003-1.016x** | Bitstream exact |
 | Fixed-size trellis clears | Lossy method-5/6 CLI | **1.002-1.066x** | Bitstream exact |
 | NEON predictors 9-12 | Lossless complete CLI | **0.998-1.021x** | Bitstream exact |
@@ -191,6 +192,30 @@ CPU and NEON output was byte-identical at qualities 25/75/95 and methods
 
 Decision: **kept**. The 0.2-1.2% whole-encode gain is modest but consistent,
 has no initialization or transfer cost, and composes with the intra4 win.
+
+## Kept: AArch64 NEON WHT quantization
+
+The AArch64 encoder already had a bit-exact NEON block quantizer and dispatched
+ordinary 4x4 quantization to it, but Walsh-Hadamard DC quantization still used
+`QuantizeBlock_C`. Upstream commit `314a142a` confirms that both operations use
+the same compatible kernel. The missing dispatch was added as an isolated
+one-line experiment.
+
+Fifteen alternating quality-75 complete CLI trials:
+
+| Input | Method 4 speedup | Method 6 speedup |
+|---|---:|---:|
+| `layout.png` | **1.002x** | 1.000x (neutral) |
+| `mitski.png` | **1.010x** | **1.009x** |
+| `corgi.jpeg` | **1.015x** | **1.009x** |
+| `twinpeaks.jpg` | **1.011x** | **1.008x** |
+| `siamese.jpg` | **1.012x** | **1.011x** |
+
+Five images produced byte-identical files at qualities 25/75/95 and methods
+4/5/6 (45 combinations).
+
+Decision: **kept**. The four meaningful inputs consistently gain 0.8-1.5%
+with no startup cost or output change; the tiny Layout case is neutral.
 
 ## Kept: reduced lossy trellis scoring work
 

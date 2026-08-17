@@ -56,6 +56,10 @@ predictor backports for A/B benchmarking. They are enabled by default. Intra4
 improved complete lossy encode time by roughly 0.4-2.4% and intra16 by
 0.2-1.2% on the measured set without changing the bitstream.
 
+Walsh-Hadamard DC quantization now uses the existing compatible AArch64 NEON
+quantizer instead of scalar C, improving meaningful complete lossy encodes by
+0.8-1.5% with byte-identical output.
+
 The method-6 trellis hot loop also includes two exact upstream optimizations.
 Reduced scoring work improves complete lossy encodes by 0.3-1.6%; fixed-size
 coefficient clears remove two hot-loop `bzero` calls and add another 2.6-6.6%
