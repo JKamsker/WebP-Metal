@@ -16,6 +16,7 @@
 #if defined(WEBP_USE_NEON)
 
 #include <arm_neon.h>
+#include <stdlib.h>
 
 #include "src/dsp/lossless.h"
 #include "src/dsp/neon.h"
@@ -197,6 +198,34 @@ static uint32_t Predictor6_NEON(uint32_t left, const uint32_t* const top) {
 static uint32_t Predictor7_NEON(uint32_t left, const uint32_t* const top) {
   return Average2_NEON(left, top[0]);
 }
+#if defined(__aarch64__)
+static uint32_t Predictor9_NEON(uint32_t left, const uint32_t* const top) {
+  (void)left;
+  return Average2_NEON(top[0], top[1]);
+}
+static uint32_t Predictor10_NEON(uint32_t left, const uint32_t* const top) {
+  return Average2_NEON(Average2_NEON(left, top[-1]),
+                       Average2_NEON(top[0], top[1]));
+}
+static uint32_t Predictor11_NEON(uint32_t left, const uint32_t* const top) {
+  const uint8x8_t L = LOAD_U32_AS_U8(left);
+  const uint8x8_t T = LOAD_U32_AS_U8(top[0]);
+  const uint8x8_t TL = LOAD_U32_AS_U8(top[-1]);
+  const uint16_t distance_l = vaddlv_u8(vabd_u8(L, TL));
+  const uint16_t distance_t = vaddlv_u8(vabd_u8(T, TL));
+  return distance_l <= distance_t ? top[0] : left;
+}
+static uint32_t Predictor12_NEON(uint32_t left, const uint32_t* const top) {
+  const uint8x8_t L = LOAD_U32_AS_U8(left);
+  const uint8x8_t T = LOAD_U32_AS_U8(top[0]);
+  const uint8x8_t TL = LOAD_U32_AS_U8(top[-1]);
+  const int16x8_t difference =
+      vreinterpretq_s16_u16(vsubl_u8(T, TL));
+  const int16x8_t sum = vaddq_s16(vreinterpretq_s16_u16(vmovl_u8(L)),
+                                  difference);
+  return GET_U8_AS_U32(vqmovun_s16(sum));
+}
+#endif
 static uint32_t Predictor13_NEON(uint32_t left, const uint32_t* const top) {
   return ClampedAddSubtractHalf_NEON(left, top[0], top[-1]);
 }
@@ -609,6 +638,17 @@ WEBP_TSAN_IGNORE_FUNCTION void VP8LDspInitNEON(void) {
   VP8LPredictors[5] = Predictor5_NEON;
   VP8LPredictors[6] = Predictor6_NEON;
   VP8LPredictors[7] = Predictor7_NEON;
+#if defined(__aarch64__)
+  {
+    const char* const enabled = getenv("WEBP_NEON_LOSSLESS_PREDICTORS");
+    if (enabled == NULL || enabled[0] != '0') {
+      VP8LPredictors[9] = Predictor9_NEON;
+      VP8LPredictors[10] = Predictor10_NEON;
+      VP8LPredictors[11] = Predictor11_NEON;
+      VP8LPredictors[12] = Predictor12_NEON;
+    }
+  }
+#endif
   VP8LPredictors[13] = Predictor13_NEON;
 
   VP8LPredictorsAdd[0] = PredictorAdd0_NEON;

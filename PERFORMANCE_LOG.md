@@ -175,6 +175,33 @@ CPU and NEON output was byte-identical at qualities 25/75/95 and methods
 Decision: **kept**. The 0.2-1.2% whole-encode gain is modest but consistent,
 has no initialization or transfer cost, and composes with the intra4 win.
 
+## Kept: AArch64 NEON lossless predictors 9-12
+
+After Metal acceleration, a method-6 lossless profile put 463 of 843 samples
+in residual/predictor search and 328 in hash-chain construction. Predictor
+modes 9-12 appeared as scalar C in the call tree. Small arm64 implementations
+were added for channel-wise averages, selection, and clamped add/subtract.
+
+Seven alternating complete Metal-enabled lossless CLI trials:
+
+| Input | Method | Scalar predictors | NEON predictors | Speedup |
+|---|---:|---:|---:|---:|
+| `layout.png` | 4 | 0.1176 s | 0.1156 s | **1.018x** |
+| `mitski.png` | 4 | 0.6220 s | 0.6090 s | **1.021x** |
+| `corgi.jpeg` | 4 | 1.4206 s | 1.3994 s | **1.015x** |
+| `layout.png` | 6 | 0.0499 s | 0.0501 s | 0.998x (noise/neutral) |
+| `mitski.png` | 6 | 0.7865 s | 0.7824 s | **1.005x** |
+| `corgi.jpeg` | 6 | 1.7263 s | 1.7141 s | **1.007x** |
+
+CPU and NEON paths produced byte-identical lossless WebP files for three
+images at methods 0/4/6. `WEBP_NEON_LOSSLESS_PREDICTORS=0` provides the A/B
+switch.
+
+Decision: **kept**. Method 4 consistently gains 1.5-2.1%; method 6 is neutral
+to 0.7% faster. The single 0.2% negative is below timing resolution on a 50 ms
+palette-dominated encode and does not outweigh the repeatable larger-image
+benefit.
+
 ## Next opportunities
 
 - Profile lossy macroblock analysis, residual transforms, quantization, and
