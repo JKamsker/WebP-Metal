@@ -1,5 +1,11 @@
 # WebP-Metal
 
+> [!IMPORTANT]
+> This legacy libwebp 1.0.3-based repository has been superseded by
+> [libwebp-metal](https://github.com/JKamsker/libwebp-metal), which ports the
+> accelerator to current libwebp. This repository is retained as an archived
+> implementation and benchmark reference.
+
 WebP-Metal is a macOS/Apple-silicon port of the CUDA lossless-encoding work in
 the CMU 15-418 final project at `/Users/jonas/Documents/15418-Final-Project`.
 It builds a real `cwebp` encoder and accelerates lossless cross-color search,
