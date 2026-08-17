@@ -31,6 +31,7 @@ divided by accelerated time.
 | NEON intra4 prediction | Lossy complete CLI | **1.004-1.024x** | Bitstream exact |
 | NEON intra16 prediction | Lossy complete CLI | **1.002-1.012x** | Bitstream exact |
 | NEON WHT quantization | Lossy complete CLI | **1.000-1.015x** | Bitstream exact |
+| AArch64 vector horizontal sums | Lossy method-4 CLI | **1.000-1.005x** | Bitstream exact |
 | Reduced trellis scoring work | Lossy method-6 CLI | **1.003-1.016x** | Bitstream exact |
 | Fixed-size trellis clears | Lossy method-5/6 CLI | **1.002-1.066x** | Bitstream exact |
 | NEON predictors 9-12 | Lossless complete CLI | **0.998-1.021x** | Bitstream exact |
@@ -216,6 +217,27 @@ Five images produced byte-identical files at qualities 25/75/95 and methods
 
 Decision: **kept**. The four meaningful inputs consistently gain 0.8-1.5%
 with no startup cost or output change; the tiny Layout case is neutral.
+
+## Kept: native AArch64 vector horizontal sums
+
+Upstream commit `e68765af` replaces pairwise widen/extract sequences in NEON
+SSE and coefficient-flatness scoring with AArch64's native `vaddvq_u32`
+horizontal sum. The first fifteen-trial run measured 1.001-1.007x at method 4,
+but method 6 was neutral (0.998-1.001x), so the larger method-4 inputs were
+rerun for 31 alternating trials:
+
+| Input | Previous reduction | Native `vaddvq_u32` | Speedup |
+|---|---:|---:|---:|
+| `mitski.png` | 0.12692 s | 0.12696 s | 1.000x (neutral) |
+| `corgi.jpeg` | 0.29393 s | 0.29249 s | **1.005x** |
+| `twinpeaks.jpg` | 0.57542 s | 0.57406 s | **1.002x** |
+| `siamese.jpg` | 0.41784 s | 0.41695 s | **1.002x** |
+
+Five images produced byte-identical files at qualities 25/75/95 and methods
+4/5/6 (45 combinations).
+
+Decision: **kept**. This is a small 0.2-0.5% method-4 gain on three substantial
+inputs, neutral elsewhere, and a simple exact replacement with no startup cost.
 
 ## Kept: reduced lossy trellis scoring work
 

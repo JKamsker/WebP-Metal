@@ -58,7 +58,8 @@ improved complete lossy encode time by roughly 0.4-2.4% and intra16 by
 
 Walsh-Hadamard DC quantization now uses the existing compatible AArch64 NEON
 quantizer instead of scalar C, improving meaningful complete lossy encodes by
-0.8-1.5% with byte-identical output.
+0.8-1.5% with byte-identical output. Native AArch64 vector horizontal sums add
+a further 0.2-0.5% on several method-4 inputs and are neutral elsewhere.
 
 The method-6 trellis hot loop also includes two exact upstream optimizations.
 Reduced scoring work improves complete lossy encodes by 0.3-1.6%; fixed-size
