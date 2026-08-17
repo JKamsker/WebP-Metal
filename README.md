@@ -2,15 +2,19 @@
 
 WebP-Metal is a macOS/Apple-silicon port of the CUDA lossless-encoding work in
 the CMU 15-418 final project at `/Users/jonas/Documents/15418-Final-Project`.
-It builds a real `cwebp` encoder and accelerates lossless cross-color search and
-lossy opaque RGB-to-YUV420 conversion with Metal compute kernels. On AArch64 it
-also backports libwebp's newer NEON intra4 prediction kernel.
+It builds a real `cwebp` encoder and accelerates lossless cross-color search,
+lossless backward-reference matching, and lossy opaque RGB-to-YUV420
+conversion with Metal compute kernels. On AArch64 it also backports selected
+newer libwebp NEON encoder kernels.
 
 The port is intentionally not a line-for-line CUDA translation:
 
 - One Metal threadgroup owns one lossless transform tile.
 - 256 threads cooperatively process up to 32x32 pixels and build threadgroup
   histograms with local atomics.
+- Lossless hash-chain candidates are searched independently on the GPU, then
+  the original left-extension/skip decisions are replayed on the CPU. This
+  makes the backward-reference result byte-exact with the CPU path.
 - The Metal device, runtime-compiled pipeline, command queue, and shared
   buffers are cached and reused.
 - Apple unified memory is used through `MTLStorageModeShared`; the encoder does
@@ -64,6 +68,22 @@ controls:
   Metal for tests.
 - `WEBP_METAL_VERBOSE=1` prints the selected GPU and transform timing.
 
+Lossless hash-chain search has separate controls:
+
+- `WEBP_METAL_HASH=0` disables the exact GPU match search.
+- `WEBP_METAL_HASH_MIN_PIXELS=N` changes its conservative 4,000,000-pixel
+  threshold. Use `0` for warmed batch encoders or forced tests. Below the
+  threshold, the benefit is content-dependent and shader startup can dominate
+  a one-shot encode.
+- `WEBP_METAL_VERBOSE=1` also prints each hash-candidate command timing.
+
+On the M4 Max, the hash accelerator improved complete one-shot method-4
+lossless encodes by 1.41x on 4.2-4.5 MP inputs, 1.61x on Corgi (5.9 MP), and
+1.76x on Siamese (9.2 MP). Method 6 improved by 1.30x, 1.45x, and 1.62x,
+respectively. It produces byte-identical WebP files. The 4 MP default avoids
+measurable regressions on small or easy inputs; batch callers may set the
+threshold to zero to reuse the lazily compiled pipeline.
+
 Lossy RGB-to-YUV conversion has separate controls because its best use case is
 a persistent batch encoder:
 
@@ -82,6 +102,7 @@ On the M4 Max, warmed `WebPPictureImportRGB` improved by 4.55x at 6 MP and
 
 ```sh
 scripts/test.sh
+scripts/test_hash_chain.sh /path/to/image.png [/path/to/another.jpg]
 scripts/test_lossy.sh /path/to/image.jpg [/path/to/another.png]
 scripts/benchmark.sh /path/to/image.png 5 6
 make benchmark-lossy-import
@@ -89,14 +110,23 @@ WEBP_METAL_LOSSY=0 build/benchmark_lossy_import 4000 3000 30
 WEBP_METAL_LOSSY_MIN_PIXELS=0 build/benchmark_lossy_import 4000 3000 30
 ```
 
-`test.sh` encodes through both paths, decodes both files, and requires the
-decoded pixels to be byte-identical. `benchmark.sh` reports average complete
-CLI runtime, speedup, and output size for CPU and Metal.
+`test.sh` encodes through both transform paths, decodes both files, and requires
+the decoded pixels to be byte-identical. `test_hash_chain.sh` forces CPU and
+Metal hash matching at methods 0-6 and requires byte-identical WebP files.
+`benchmark.sh` reports average complete CLI runtime, speedup, and output size
+for CPU and Metal.
 
-On an Apple M4 Max with the reference project's 2876x1572 `mitski.png`, method
-4 took 0.96 s on CPU and 0.55 s through Metal (1.75x end-to-end speedup). The
-Metal transform itself took about 24 ms. Method 6 took 1.22 s versus 0.72 s
-(1.69x). Timings include per-process shader compilation.
+Current cumulative lossless results on the Apple M4 Max, with both Metal
+stages enabled and per-process shader compilation included:
+
+| Input | Method | CPU | All Metal | Speedup |
+|---|---:|---:|---:|---:|
+| `mitski.png` | 4 | 1.030 s | 0.433 s | **2.38x** |
+| `corgi.jpeg` | 4 | 1.826 s | 0.872 s | **2.10x** |
+| `siamese.jpg` | 4 | 3.398 s | 1.430 s | **2.38x** |
+| `mitski.png` | 6 | 1.306 s | 0.604 s | **2.16x** |
+| `corgi.jpeg` | 6 | 2.432 s | 1.178 s | **2.06x** |
+| `siamese.jpg` | 6 | 4.131 s | 1.760 s | **2.35x** |
 
 ## Compression tradeoff
 

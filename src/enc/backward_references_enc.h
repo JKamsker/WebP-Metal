@@ -137,6 +137,12 @@ int VP8LHashChainInit(VP8LHashChain* const p, int size);
 int VP8LHashChainFill(VP8LHashChain* const p, int quality,
                       const uint32_t* const argb, int xsize, int ysize,
                       int low_effort);
+#if defined(WEBP_USE_METAL)
+int VP8LHashChainFillMetalCandidates(
+    const uint32_t* pixels, const int32_t* chain, int size, int xsize,
+    int iter_max, uint32_t window_size, int low_effort,
+    uint32_t* candidates);
+#endif
 void VP8LHashChainClear(VP8LHashChain* const p);  // release memory
 
 static WEBP_INLINE int VP8LHashChainFindOffset(const VP8LHashChain* const p,

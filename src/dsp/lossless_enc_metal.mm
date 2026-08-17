@@ -18,11 +18,13 @@
 
 extern "C" {
 #include "src/dsp/lossless.h"
+#include "src/enc/backward_references_enc.h"
 }
 
 namespace {
 
 constexpr size_t kDefaultMinimumPixels = 256u * 256u;
+constexpr size_t kDefaultHashMinimumPixels = 4u * 1000u * 1000u;
 constexpr NSUInteger kPreferredThreads = 256;
 
 // Compiling once at runtime keeps this target buildable with the command-line
@@ -273,6 +275,92 @@ kernel void color_space_transform(
     pixels[index] = (pixel & 0xff00ff00u) | (new_red << 16) | new_blue;
   }
 }
+
+)METAL";
+
+constexpr const char* kHashMetalSource = R"METAL(
+#include <metal_stdlib>
+using namespace metal;
+
+struct HashParams {
+  uint size;
+  uint xsize;
+  uint iter_max;
+  uint window_size;
+  uint low_effort;
+};
+
+inline uint match_length(device const uint* pixels, uint first, uint second,
+                         uint best_length, uint max_length) {
+  if (pixels[first + best_length] != pixels[second + best_length]) return 0u;
+  uint length = 0u;
+  while (length < max_length &&
+         pixels[first + length] == pixels[second + length]) {
+    ++length;
+  }
+  return length;
+}
+
+kernel void hash_chain_candidates(
+    device const uint* pixels [[buffer(0)]],
+    device const int* chain [[buffer(1)]],
+    device uint* candidates [[buffer(2)]],
+    constant HashParams& params [[buffer(3)]],
+    uint base_position [[thread_position_in_grid]]) {
+  if (base_position >= params.size) return;
+  if (base_position == 0u || base_position + 1u >= params.size) {
+    candidates[base_position] = 0u;
+    return;
+  }
+
+  const uint max_length = min(4095u, params.size - 1u - base_position);
+  const uint minimum_position = base_position > params.window_size
+      ? base_position - params.window_size : 0u;
+  const uint good_length = min(max_length, 256u);
+  uint best_length = 0u;
+  uint best_distance = 0u;
+  int iterations = int(params.iter_max);
+  int position = chain[base_position];
+
+  if (params.low_effort == 0u) {
+    if (base_position >= params.xsize) {
+      const uint current = match_length(
+          pixels, base_position - params.xsize, base_position,
+          best_length, max_length);
+      if (current > best_length) {
+        best_length = current;
+        best_distance = params.xsize;
+      }
+      --iterations;
+    }
+    const uint current = match_length(
+        pixels, base_position - 1u, base_position, best_length, max_length);
+    if (current > best_length) {
+      best_length = current;
+      best_distance = 1u;
+    }
+    --iterations;
+    if (best_length == 4095u) position = int(minimum_position) - 1;
+  }
+
+  uint best_pixel = pixels[base_position + best_length];
+  while (position >= int(minimum_position)) {
+    --iterations;
+    if (iterations == 0) break;
+    if (pixels[uint(position) + best_length] == best_pixel) {
+      const uint current = match_length(
+          pixels, uint(position), base_position, 0u, max_length);
+      if (current > best_length) {
+        best_length = current;
+        best_distance = base_position - uint(position);
+        best_pixel = pixels[base_position + best_length];
+        if (best_length >= good_length) break;
+      }
+    }
+    position = chain[position];
+  }
+  candidates[base_position] = (best_distance << 12) | best_length;
+}
 )METAL";
 
 struct KernelParams {
@@ -283,16 +371,29 @@ struct KernelParams {
   uint32_t tile_columns;
 };
 
+struct HashKernelParams {
+  uint32_t size;
+  uint32_t xsize;
+  uint32_t iter_max;
+  uint32_t window_size;
+  uint32_t low_effort;
+};
+
 struct MetalState {
   id<MTLDevice> device = nil;
   id<MTLCommandQueue> queue = nil;
   id<MTLComputePipelineState> pipeline = nil;
+  id<MTLComputePipelineState> hash_pipeline = nil;
   id<MTLBuffer> pixel_buffer = nil;
   id<MTLBuffer> transform_buffer = nil;
+  id<MTLBuffer> chain_buffer = nil;
   size_t pixel_capacity = 0;
   size_t transform_capacity = 0;
+  size_t chain_capacity = 0;
   size_t minimum_pixels = kDefaultMinimumPixels;
+  size_t hash_minimum_pixels = kDefaultHashMinimumPixels;
   bool verbose = false;
+  bool hash_pipeline_attempted = false;
   std::mutex operation_mutex;
 };
 
@@ -329,6 +430,8 @@ void InitializeMetal() {
     state->verbose = EnvironmentFlag("WEBP_METAL_VERBOSE", false);
     state->minimum_pixels = EnvironmentSize("WEBP_METAL_MIN_PIXELS",
                                              kDefaultMinimumPixels);
+    state->hash_minimum_pixels = EnvironmentSize(
+        "WEBP_METAL_HASH_MIN_PIXELS", kDefaultHashMinimumPixels);
     state->device = MTLCreateSystemDefaultDevice();
     if (state->device == nil) {
       delete state;
@@ -363,8 +466,10 @@ void InitializeMetal() {
       return;
     }
     if (state->verbose) {
-      std::fprintf(stderr, "WebP-Metal: using %s (minimum %zu pixels)\n",
-                   state->device.name.UTF8String, state->minimum_pixels);
+      std::fprintf(stderr,
+                   "WebP-Metal: using %s (transform minimum %zu, hash minimum "
+                   "%zu pixels)\n", state->device.name.UTF8String,
+                   state->minimum_pixels, state->hash_minimum_pixels);
     }
     g_state = state;
   }
@@ -374,6 +479,34 @@ MetalState* GetMetalState() {
   static dispatch_once_t once_token;
   dispatch_once(&once_token, ^{ InitializeMetal(); });
   return g_state;
+}
+
+bool EnsureHashPipeline(MetalState* state) {
+  if (state->hash_pipeline != nil) return true;
+  if (state->hash_pipeline_attempted) return false;
+  state->hash_pipeline_attempted = true;
+  NSError* error = nil;
+  NSString* source = [NSString stringWithUTF8String:kHashMetalSource];
+  id<MTLLibrary> library = [state->device newLibraryWithSource:source
+                                                       options:nil
+                                                         error:&error];
+  if (library == nil) {
+    if (state->verbose) {
+      std::fprintf(stderr, "WebP-Metal: hash shader compilation failed: %s\n",
+                   error.localizedDescription.UTF8String);
+    }
+    return false;
+  }
+  id<MTLFunction> function = [library newFunctionWithName:
+      @"hash_chain_candidates"];
+  if (function == nil) return false;
+  state->hash_pipeline = [state->device newComputePipelineStateWithFunction:
+      function error:&error];
+  if (state->hash_pipeline == nil && state->verbose) {
+    std::fprintf(stderr, "WebP-Metal: hash pipeline creation failed: %s\n",
+                 error.localizedDescription.UTF8String);
+  }
+  return state->hash_pipeline != nil;
 }
 
 bool EnsureBuffers(MetalState* state, size_t pixel_bytes,
@@ -391,6 +524,18 @@ bool EnsureBuffers(MetalState* state, size_t pixel_bytes,
         options:MTLResourceStorageModeShared];
     if (state->transform_buffer == nil) return false;
     state->transform_capacity = capacity;
+  }
+  return true;
+}
+
+bool EnsureHashBuffers(MetalState* state, size_t bytes) {
+  if (!EnsureBuffers(state, bytes, bytes)) return false;
+  if (bytes > state->chain_capacity) {
+    const size_t capacity = RoundedBufferLength(bytes);
+    state->chain_buffer = [state->device newBufferWithLength:capacity
+        options:MTLResourceStorageModeShared];
+    if (state->chain_buffer == nil) return false;
+    state->chain_capacity = capacity;
   }
   return true;
 }
@@ -469,6 +614,63 @@ void ColorSpaceTransformMetal(int width, int height, int bits, int quality,
                    "WebP-Metal: transformed %dx%d in %.3f ms (%zu tiles)\n",
                    width, height, milliseconds, tile_count);
     }
+  }
+}
+
+extern "C" int VP8LHashChainFillMetalCandidates(
+    const uint32_t* pixels, const int32_t* chain, int size, int xsize,
+    int iter_max, uint32_t window_size, int low_effort,
+    uint32_t* candidates) {
+  MetalState* state = GetMetalState();
+  if (state == nullptr || pixels == nullptr || chain == nullptr ||
+      candidates == nullptr || size <= 2 || xsize <= 0 || iter_max <= 0 ||
+      static_cast<size_t>(size) < state->hash_minimum_pixels ||
+      !EnvironmentFlag("WEBP_METAL_HASH", true)) {
+    return 0;
+  }
+
+  const size_t bytes = static_cast<size_t>(size) * sizeof(uint32_t);
+  const HashKernelParams params = {
+      static_cast<uint32_t>(size), static_cast<uint32_t>(xsize),
+      static_cast<uint32_t>(iter_max), window_size,
+      static_cast<uint32_t>(low_effort != 0)};
+  std::lock_guard<std::mutex> lock(state->operation_mutex);
+  @autoreleasepool {
+    if (!EnsureHashPipeline(state) || !EnsureHashBuffers(state, bytes)) return 0;
+    const CFAbsoluteTime start = CFAbsoluteTimeGetCurrent();
+    std::memcpy(state->pixel_buffer.contents, pixels, bytes);
+    std::memcpy(state->chain_buffer.contents, chain, bytes);
+
+    id<MTLCommandBuffer> command_buffer = [state->queue commandBuffer];
+    id<MTLComputeCommandEncoder> encoder =
+        [command_buffer computeCommandEncoder];
+    if (command_buffer == nil || encoder == nil) return 0;
+    [encoder setComputePipelineState:state->hash_pipeline];
+    [encoder setBuffer:state->pixel_buffer offset:0 atIndex:0];
+    [encoder setBuffer:state->chain_buffer offset:0 atIndex:1];
+    [encoder setBuffer:state->transform_buffer offset:0 atIndex:2];
+    [encoder setBytes:&params length:sizeof(params) atIndex:3];
+    const NSUInteger threads = std::min(
+        kPreferredThreads, state->hash_pipeline.maxTotalThreadsPerThreadgroup);
+    [encoder dispatchThreads:MTLSizeMake(static_cast<NSUInteger>(size), 1, 1)
+        threadsPerThreadgroup:MTLSizeMake(threads, 1, 1)];
+    [encoder endEncoding];
+    [command_buffer commit];
+    [command_buffer waitUntilCompleted];
+    if (command_buffer.status != MTLCommandBufferStatusCompleted) {
+      if (state->verbose) {
+        std::fprintf(stderr, "WebP-Metal: hash command failed: %s\n",
+                     command_buffer.error.localizedDescription.UTF8String);
+      }
+      return 0;
+    }
+    std::memcpy(candidates, state->transform_buffer.contents, bytes);
+    if (state->verbose) {
+      std::fprintf(stderr,
+                   "WebP-Metal: hash candidates for %d pixels in %.3f ms\n",
+                   size, (CFAbsoluteTimeGetCurrent() - start) * 1000.0);
+    }
+    return 1;
   }
 }
 

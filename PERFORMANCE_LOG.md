@@ -23,6 +23,8 @@ divided by accelerated time.
 |---|---|---:|---|
 | Metal cross-color transform | Lossless stage | **17.27-41.93x** | Decoded pixels exact; size -0.15% to +0.28% |
 | Metal cross-color transform | Complete lossless CLI | **1.69-1.76x** | Decoded pixels exact |
+| Metal hash-chain search | Lossless stage / complete CLI | **12-72x / 1.02-1.76x** | Bitstream exact |
+| Both lossless Metal stages | Complete lossless CLI | **2.06-2.38x** | Decoded pixels exact |
 | Metal RGB-to-YUV420 | Lossy warmed batch stage | **4.55-4.95x** | Bitstream exact |
 | Metal RGB-to-YUV420 | 178 MP cold stage / complete CLI | **1.63x / 1.005x** | Bitstream exact |
 | Multithreaded CLI default | Primarily lossy complete CLI | **1.04-1.08x** representative | Bitstream exact |
@@ -246,6 +248,79 @@ extraction overhead. Match scanning was neutral to 0.7% slower on meaningful
 inputs; most candidate chains reject before four pixels, so vector setup does
 not amortize. The original scalar code remains active.
 
+## Kept: exact lossless hash-chain matching with Metal
+
+Instrumentation separated the hash-table fill from the best-match traversal.
+On representative method-4 inputs, table construction took 0.6-6.4 ms while
+the serial match search took 1.5 ms (`layout.png`), 199.5 ms (`mitski.png`),
+and 536.0 ms (`corgi.jpeg`). The data-dependent predecessor walk, rather than
+building the hash table, was the useful target.
+
+The retained implementation keeps the CPU-built predecessor chain but launches
+one Metal thread per base position to compute the same best match. The CPU then
+replays libwebp's original left-extension and position-skipping rules from
+those candidates. This preserves all ordering-sensitive choices: six diverse
+images, including synthetic noise and photographic inputs, produced
+byte-identical files with CPU and Metal matching at every method from 0 to 6.
+Near-lossless strengths 20, 60, and 100 were also byte-identical at methods 0,
+4, and 6.
+
+Nine alternating complete CLI trials on an Apple M4 Max, including lazy shader
+compilation in each process:
+
+| Input | Method | CPU hash search | Metal hash search | Speedup |
+|---|---:|---:|---:|---:|
+| `apple_holiday.png` (4.35 MP) | 4 | 0.4068 s | 0.3967 s | **1.026x** |
+| `bon_appetit.png` (4.18 MP) | 4 | 0.6092 s | 0.4312 s | **1.413x** |
+| `mitski.png` (4.52 MP) | 4 | 0.6009 s | 0.4255 s | **1.412x** |
+| `corgi.jpeg` (5.87 MP) | 4 | 1.3955 s | 0.8670 s | **1.610x** |
+| `siamese.jpg` (9.22 MP) | 4 | 2.4586 s | 1.4005 s | **1.756x** |
+| `apple_holiday.png` (4.35 MP) | 6 | 0.5440 s | 0.5347 s | **1.017x** |
+| `bon_appetit.png` (4.18 MP) | 6 | 0.7614 s | 0.5853 s | **1.301x** |
+| `mitski.png` (4.52 MP) | 6 | 0.7559 s | 0.5838 s | **1.295x** |
+| `corgi.jpeg` (5.87 MP) | 6 | 1.6715 s | 1.1494 s | **1.454x** |
+| `siamese.jpg` (9.22 MP) | 6 | 2.7967 s | 1.7226 s | **1.624x** |
+
+For the main method-4 pass, GPU command time was about 16.5 ms on Mitski and
+7.5 ms on Corgi, versus 199.5 ms and 536.0 ms for the instrumented CPU search
+(about 12x and 72x at the targeted stage). End-to-end gains are smaller because
+hash-table construction, residual transforms, histogram work, and entropy
+coding stay on the CPU.
+
+Threshold experiments exposed two important non-wins. Eagerly compiling this
+second shader slowed below-threshold encodes by 1-2%, so the hash pipeline is
+now compiled lazily. Forcing it on `layout.png` (1.16 MP),
+`carbon_emissions.png` (2.17 MP), and `zip.png` (3.15 MP) ranged from a clear
+regression on the tiny image to approximately neutral on the simple larger
+ones. The default is therefore 4,000,000 pixels. A clean pre-change binary and
+the final lazy version were indistinguishable (0.998-1.007x) on those fallback
+cases. `WEBP_METAL_HASH_MIN_PIXELS=0` remains useful for persistent batch
+encoders, where compilation is amortized and complex smaller images can still
+win; that below-threshold benefit is explicitly content-dependent.
+
+Decision: **kept**. This is the largest exact whole-encoder improvement so far.
+`WEBP_METAL_HASH=0` provides the A/B/fallback switch.
+
+### Cumulative lossless result
+
+Seven alternating trials compared `WEBP_METAL=0` with the final default,
+combining the cross-color and exact hash-search accelerators. Both variants
+included the retained NEON code:
+
+| Input | Method | CPU | All Metal | Cumulative speedup |
+|---|---:|---:|---:|---:|
+| `mitski.png` | 4 | 1.0303 s | 0.4332 s | **2.379x** |
+| `corgi.jpeg` | 4 | 1.8264 s | 0.8715 s | **2.096x** |
+| `siamese.jpg` | 4 | 3.3979 s | 1.4304 s | **2.375x** |
+| `mitski.png` | 6 | 1.3065 s | 0.6040 s | **2.163x** |
+| `corgi.jpeg` | 6 | 2.4324 s | 1.1784 s | **2.064x** |
+| `siamese.jpg` | 6 | 4.1313 s | 1.7595 s | **2.348x** |
+
+These are the current CPU-versus-Metal whole-encoder figures. The Metal
+cross-color transform can choose different—but still exactly decodable—lossless
+transform parameters, so cumulative output sizes retain the previously
+documented small variation. The new hash-search stage itself is bit-exact.
+
 ## Profiled, not yet implemented
 
 ### Lossy token/trellis loop
@@ -260,18 +335,14 @@ Status: **next major lossy research target**, not yet claimed as an
 improvement. A useful experiment needs a batched macroblock interface and an
 exact CPU fallback, followed by size/PSNR and total-time checks.
 
-### Lossless hash chain and entropy scoring
+### Remaining lossless entropy scoring
 
-After the Metal transform, a one-second method-6 sample placed 328 of 843
-main-thread samples in `VP8LHashChainFill` and 463 in residual/predictor search;
-221 samples were directly in `CombinedShannonEntropy_C`. The hash-chain match
-search walks data-dependent predecessor links and performs left-extension
-updates, making a bit-exact parallel translation non-trivial.
-
-Status: **next major lossless research target**. Candidate designs are an
-independent-position GPU match search (lossless pixels but potentially changed
-compression size) or a CPU/NEON entropy scorer. Neither has been implemented,
-so no speedup is attributed to them.
+After the Metal transform, a one-second method-6 sample placed 463 of 843
+main-thread samples in residual/predictor search; 221 samples were directly in
+`CombinedShannonEntropy_C`. The straightforward exact NEON entropy prototype
+was slower and has been removed, as recorded above. A profitable next design
+would need to reduce or batch the repeated histogram scoring rather than only
+vectorizing its final 256-bin loop.
 
 ## Next opportunities
 
@@ -279,7 +350,7 @@ so no speedup is attributed to them.
   entropy coding; RGB conversion is a small fraction of complete encode time.
 - Investigate avoiding the remaining RGB input and planar output copies with
   page-aligned/no-copy shared buffers in integrations that control allocation.
-- Profile lossless backward-reference generation and histogram clustering,
-  which now dominate after the cross-color transform acceleration.
+- Profile lossless residual/predictor search and histogram clustering, which
+  now dominate after cross-color and hash-search acceleration.
 - Selectively evaluate newer libwebp NEON and encoder changes against this fork,
   keeping only reproducible wins and preserving output/correctness invariants.
