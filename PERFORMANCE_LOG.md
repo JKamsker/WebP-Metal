@@ -252,6 +252,18 @@ methods 4/5/6 (45 combinations).
 Decision: **kept**. This removes hot-loop function calls, is exact, and provides
 a surprisingly material 2.6-6.6% method-6 whole-encoder gain on this machine.
 
+## Rejected: restrict qualifiers in lossy quantization
+
+Upstream commit `b9d2f9cd` adds non-aliasing qualifiers throughout the
+quantization/reconstruction call graph and reported a few fewer instructions.
+The complete change was tested after the two retained trellis optimizations.
+Fifteen alternating quality-75 trials across five images measured
+0.996-1.005x at method 4 and 0.999-1.001x at method 6.
+
+Decision: **rejected and removed**. On Apple Clang this is timing noise, with
+small regressions in several cases; keeping annotation churn without a measured
+benefit would make future backports harder to review.
+
 ## Kept: AArch64 NEON lossless predictors 9-12
 
 After Metal acceleration, a method-6 lossless profile put 463 of 843 samples
