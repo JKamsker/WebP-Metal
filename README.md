@@ -42,6 +42,10 @@ offline `metal` compiler and a full Xcode installation are not required.
 ./cwebp-metal -q 75 -m 4 input.jpg -o output.webp
 ```
 
+The optimized CLI enables libwebp multithreading by default. Use `-no_mt` for
+a single-thread baseline; `-mt` is still accepted explicitly. This does not
+change the public library's `WebPConfig` default.
+
 Metal is enabled by default for images of at least 65,536 pixels. Environment
 controls:
 

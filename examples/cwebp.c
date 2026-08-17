@@ -567,7 +567,8 @@ static void HelpLong(void) {
   printf("  -pass <int> ............ analysis pass number (1..10)\n");
   printf("  -crop <x> <y> <w> <h> .. crop picture with the given rectangle\n");
   printf("  -resize <w> <h> ........ resize picture (after any cropping)\n");
-  printf("  -mt .................... use multi-threading if available\n");
+  printf("  -mt .................... use multi-threading (default)\n");
+  printf("  -no_mt ................. disable multi-threading\n");
   printf("  -low_memory ............ reduce memory usage (slower encoding)\n");
   printf("  -map <int> ............. print map of extra info\n");
   printf("  -print_psnr ............ prints averaged PSNR distortion\n");
@@ -677,6 +678,9 @@ int main(int argc, const char* argv[]) {
     fprintf(stderr, "Error! Version mismatch!\n");
     FREE_WARGV_AND_RETURN(-1);
   }
+  // This performance-oriented build enables the existing worker path by
+  // default. -no_mt preserves an explicit single-thread baseline.
+  config.thread_level = 1;
 
   if (argc == 1) {
     HelpShort();
@@ -784,7 +788,9 @@ int main(int argc, const char* argv[]) {
     } else if (!strcmp(argv[c], "-jpeg_like")) {
       config.emulate_jpeg_size = 1;
     } else if (!strcmp(argv[c], "-mt")) {
-      ++config.thread_level;  // increase thread level
+      config.thread_level = 1;
+    } else if (!strcmp(argv[c], "-no_mt")) {
+      config.thread_level = 0;
     } else if (!strcmp(argv[c], "-low_memory")) {
       config.low_memory = 1;
     } else if (!strcmp(argv[c], "-strong")) {

@@ -105,7 +105,7 @@ Decision: **not adopted as a performance change**. It was not a consistent win
 on this small sample and would confound comparisons with the original CUDA
 fork. Individual newer optimizations remain candidates for selective porting.
 
-## Candidate measured: existing lossy multithreading
+## Kept: multithreaded CLI default
 
 The existing `-mt` option was measured with Metal lossy conversion disabled.
 
@@ -116,12 +116,19 @@ The existing `-mt` option was measured with Metal lossy conversion disabled.
 | `twinpeaks.jpg` | 0.5880 s | 0.5677 s | **1.04x** |
 | `siamese.jpg` | 0.4413 s | 0.4193 s | **1.05x** |
 
-Status: measured opportunity; default behavior and an explicit opt-out still
-need to be implemented and verified before this becomes a kept improvement.
+The optimized `cwebp-metal` CLI now enables this existing worker path by
+default. `-no_mt` restores a single-thread baseline and `-mt` remains accepted.
+Lossy and lossless comparisons produced byte-identical files with and without
+threading. A post-change seven-run lossy check reproduced 1.04-1.08x on three
+inputs; `corgi.jpeg` measured 1.23x in that run but was more variable, so the
+original conservative 1.05x result above is the representative figure.
+
+Decision: **kept**. This changes only the optimized CLI default; callers of the
+libwebp API retain upstream `WebPConfig` defaults and control `thread_level`
+themselves.
 
 ## Next opportunities
 
-- Make lossy multithreading the optimized CLI default with a clear opt-out.
 - Profile lossy macroblock analysis, residual transforms, quantization, and
   entropy coding; RGB conversion is a small fraction of complete encode time.
 - Investigate avoiding the remaining RGB input and planar output copies with
