@@ -153,6 +153,28 @@ switch.
 Decision: **kept**. The gain is small but consistent across all six measured
 cases, has no GPU startup cost, and preserves output exactly.
 
+## Kept: AArch64 NEON intra16 prediction
+
+The matching upstream 16x16 DC, vertical, horizontal, and true-motion
+predictors were backported as a separate experiment. Ten alternating complete
+CLI trials, with intra4 NEON enabled in both variants and lossy Metal import
+disabled:
+
+| Input | Method | Scalar predictor | NEON predictor | Speedup |
+|---|---:|---:|---:|---:|
+| `corgi.jpeg` | 4 | 0.2964 s | 0.2944 s | **1.007x** |
+| `mitski.png` | 4 | 0.1304 s | 0.1288 s | **1.012x** |
+| `twinpeaks.jpg` | 4 | 0.5838 s | 0.5804 s | **1.006x** |
+| `corgi.jpeg` | 6 | 0.5550 s | 0.5506 s | **1.008x** |
+| `mitski.png` | 6 | 0.1914 s | 0.1895 s | **1.010x** |
+| `twinpeaks.jpg` | 6 | 1.1421 s | 1.1399 s | **1.002x** |
+
+CPU and NEON output was byte-identical at qualities 25/75/95 and methods
+0/4/6 on the three-image set. `WEBP_NEON_INTRA16=0` disables only this kernel.
+
+Decision: **kept**. The 0.2-1.2% whole-encode gain is modest but consistent,
+has no initialization or transfer cost, and composes with the intra4 win.
+
 ## Next opportunities
 
 - Profile lossy macroblock analysis, residual transforms, quantization, and

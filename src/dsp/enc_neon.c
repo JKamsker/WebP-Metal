@@ -998,6 +998,108 @@ static void Intra4Preds_NEON(uint8_t* dst, const uint8_t* top) {
   vst1_u8(dst + I4HD4 + BPS * 3, vget_high_u8(result1));
 }
 
+static WEBP_INLINE void Fill16x16_NEON(uint8_t* dst, uint8_t value) {
+  const uint8x16_t row = vdupq_n_u8(value);
+  int y;
+  for (y = 0; y < 16; ++y) vst1q_u8(dst + BPS * y, row);
+}
+
+static WEBP_INLINE void VerticalPred16_NEON(uint8_t* dst,
+                                            const uint8_t* top) {
+  if (top != NULL) {
+    const uint8x16_t row = vld1q_u8(top);
+    int y;
+    for (y = 0; y < 16; ++y) vst1q_u8(dst + BPS * y, row);
+  } else {
+    Fill16x16_NEON(dst, 127);
+  }
+}
+
+static WEBP_INLINE void HorizontalPred16_NEON(uint8_t* dst,
+                                              const uint8_t* left) {
+  int y;
+  if (left == NULL) {
+    Fill16x16_NEON(dst, 129);
+    return;
+  }
+  for (y = 0; y < 16; ++y) {
+    vst1q_u8(dst + BPS * y, vdupq_n_u8(left[y]));
+  }
+}
+
+static WEBP_INLINE void DCMode16_NEON(uint8_t* dst, const uint8_t* left,
+                                     const uint8_t* top) {
+  uint8_t dc;
+  if (top != NULL) {
+    uint16_t sum = vaddlvq_u8(vld1q_u8(top));
+    if (left != NULL) {
+      sum += vaddlvq_u8(vld1q_u8(left));
+      dc = vqrshrnh_n_u16(sum, 5);
+    } else {
+      dc = vqrshrnh_n_u16(sum, 4);
+    }
+  } else if (left != NULL) {
+    const uint16_t sum = vaddlvq_u8(vld1q_u8(left));
+    dc = vqrshrnh_n_u16(sum, 4);
+  } else {
+    dc = 0x80;
+  }
+  Fill16x16_NEON(dst, dc);
+}
+
+static WEBP_INLINE void TrueMotionRows_NEON(uint8_t* dst,
+                                            const uint8x8_t left,
+                                            const uint8x8x2_t top,
+                                            const uint16x8_t top_left,
+                                            int group, int row) {
+  uint16x8_t sum = vaddl_u8(left, top.val[0]);
+  uint8x8_t result0, result1;
+  sum = vqsubq_u16(sum, top_left);
+  result0 = vqmovun_s16(vreinterpretq_s16_u16(sum));
+  sum = vaddl_u8(left, top.val[1]);
+  sum = vqsubq_u16(sum, top_left);
+  result1 = vqmovun_s16(vreinterpretq_s16_u16(sum));
+  vst1_u8(dst + BPS * (group * 4 + row), result0);
+  vst1_u8(dst + BPS * (group * 4 + row) + 8, result1);
+}
+
+static WEBP_INLINE void TrueMotion16_NEON(uint8_t* dst,
+                                          const uint8_t* left,
+                                          const uint8_t* top) {
+  int group;
+  uint16x8_t top_left;
+  uint8x8x2_t top_rows;
+  if (left == NULL) {
+    if (top != NULL) {
+      VerticalPred16_NEON(dst, top);
+    } else {
+      Fill16x16_NEON(dst, 129);
+    }
+    return;
+  }
+  if (top == NULL) {
+    HorizontalPred16_NEON(dst, left);
+    return;
+  }
+  top_left = vdupq_n_u16(left[-1]);
+  top_rows = vld1_u8_x2(top);
+  for (group = 0; group < 4; ++group) {
+    const uint8x8x4_t left_rows = vld4_dup_u8(left + group * 4);
+    TrueMotionRows_NEON(dst, left_rows.val[0], top_rows, top_left, group, 0);
+    TrueMotionRows_NEON(dst, left_rows.val[1], top_rows, top_left, group, 1);
+    TrueMotionRows_NEON(dst, left_rows.val[2], top_rows, top_left, group, 2);
+    TrueMotionRows_NEON(dst, left_rows.val[3], top_rows, top_left, group, 3);
+  }
+}
+
+static void Intra16Preds_NEON(uint8_t* dst, const uint8_t* left,
+                              const uint8_t* top) {
+  DCMode16_NEON(I16DC16 + dst, left, top);
+  VerticalPred16_NEON(I16VE16 + dst, top);
+  HorizontalPred16_NEON(I16HE16 + dst, left);
+  TrueMotion16_NEON(I16TM16 + dst, left, top);
+}
+
 #undef RD4_VR4_LD4_VL4_NEON
 #undef DC4_VE4_HE4_TM4_NEON
 
@@ -1032,6 +1134,12 @@ WEBP_TSAN_IGNORE_FUNCTION void VP8EncDspInitNEON(void) {
     const char* const enabled = getenv("WEBP_NEON_INTRA4");
     if (enabled == NULL || enabled[0] != '0') {
       VP8EncPredLuma4 = Intra4Preds_NEON;
+    }
+  }
+  {
+    const char* const enabled = getenv("WEBP_NEON_INTRA16");
+    if (enabled == NULL || enabled[0] != '0') {
+      VP8EncPredLuma16 = Intra16Preds_NEON;
     }
   }
 #endif

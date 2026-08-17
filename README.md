@@ -47,9 +47,10 @@ The optimized CLI enables libwebp multithreading by default. Use `-no_mt` for
 a single-thread baseline; `-mt` is still accepted explicitly. This does not
 change the public library's `WebPConfig` default.
 
-`WEBP_NEON_INTRA4=0` disables the arm64 intra4 predictor backport for A/B
-benchmarking. It is enabled by default and improves complete lossy encode time
-by roughly 0.4-2.4% on the measured set without changing the bitstream.
+`WEBP_NEON_INTRA4=0` and `WEBP_NEON_INTRA16=0` disable the corresponding arm64
+predictor backports for A/B benchmarking. They are enabled by default. Intra4
+improved complete lossy encode time by roughly 0.4-2.4% and intra16 by
+0.2-1.2% on the measured set without changing the bitstream.
 
 Metal is enabled by default for images of at least 65,536 pixels. Environment
 controls:
