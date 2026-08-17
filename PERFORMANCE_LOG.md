@@ -215,6 +215,37 @@ to 0.7% faster. The single 0.2% negative is below timing resolution on a 50 ms
 palette-dominated encode and does not outweigh the repeatable larger-image
 benefit.
 
+## Rejected: AArch64 NEON entropy and match scanning
+
+Two small lossless kernels were prototyped after profiling
+`CombinedShannonEntropy_C` and `VectorMismatch_C`:
+
+- A four-bin-at-a-time NEON combined-Shannon-entropy loop.
+- A four-pixel-at-a-time NEON equality scan for hash-chain matches.
+
+The first entropy version followed the existing SSE2 operation ordering. It
+changed floating-point rounding enough to produce a 1,270-byte larger method-6
+`corgi.jpeg` stream (+0.0185%), so it was not eligible as an exact
+micro-optimization. A second version preserved the scalar evaluator's exact
+per-symbol operation order and restored byte-identical output.
+
+Five alternating complete Metal-enabled lossless trials of the exact version:
+
+| Experiment/input | Method 4 speedup | Method 6 speedup |
+|---|---:|---:|
+| NEON entropy, `layout.png` | 0.969x | 1.008x |
+| NEON entropy, `mitski.png` | 0.992x | 0.982x |
+| NEON entropy, `corgi.jpeg` | 0.995x | 0.986x |
+| NEON mismatch, `layout.png` | 1.004x | 1.002x |
+| NEON mismatch, `mitski.png` | 0.997x | 0.993x |
+| NEON mismatch, `corgi.jpeg` | 1.000x | 0.999x |
+
+Decision: **rejected and removed**. Exact entropy scoring regressed five of six
+cases because logarithm lookup/call work still dominates while NEON adds lane
+extraction overhead. Match scanning was neutral to 0.7% slower on meaningful
+inputs; most candidate chains reject before four pixels, so vector setup does
+not amortize. The original scalar code remains active.
+
 ## Profiled, not yet implemented
 
 ### Lossy token/trellis loop
