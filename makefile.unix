@@ -226,6 +226,7 @@ ENC_OBJS = \
     src/enc/near_lossless_enc.o \
     src/enc/picture_enc.o \
     src/enc/picture_csp_enc.o \
+    src/enc/picture_csp_enc_metal.o \
     src/enc/picture_psnr_enc.o \
     src/enc/picture_rescale_enc.o \
     src/enc/picture_tools_enc.o \
@@ -379,6 +380,9 @@ src/utils/bit_writer_utils.o: src/utils/endian_inl_utils.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
 src/dsp/lossless_enc_metal.o: src/dsp/lossless_enc_metal.mm $(HDRS)
+	$(CXX) $(CPPFLAGS) $(CFLAGS) -std=c++17 -fobjc-arc -c $< -o $@
+
+src/enc/picture_csp_enc_metal.o: src/enc/picture_csp_enc_metal.mm $(HDRS)
 	$(CXX) $(CPPFLAGS) $(CFLAGS) -std=c++17 -fobjc-arc -c $< -o $@
 
 examples/libanim_util.a: $(ANIM_UTIL_OBJS)

@@ -5,3 +5,4 @@ dwebp-metal
 examples/cwebp
 examples/dwebp
 /tmp/
+/build/

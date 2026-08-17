@@ -2,8 +2,8 @@
 
 WebP-Metal is a macOS/Apple-silicon port of the CUDA lossless-encoding work in
 the CMU 15-418 final project at `/Users/jonas/Documents/15418-Final-Project`.
-It builds a real `cwebp` encoder and accelerates libwebp's cross-color search
-with a Metal compute kernel.
+It builds a real `cwebp` encoder and accelerates lossless cross-color search and
+lossy opaque RGB-to-YUV420 conversion with Metal compute kernels.
 
 The port is intentionally not a line-for-line CUDA translation:
 
@@ -39,6 +39,7 @@ offline `metal` compiler and a full Xcode installation are not required.
 
 ```sh
 ./cwebp-metal -lossless -m 6 input.png -o output.webp
+./cwebp-metal -q 75 -m 4 input.jpg -o output.webp
 ```
 
 Metal is enabled by default for images of at least 65,536 pixels. Environment
@@ -49,11 +50,29 @@ controls:
   Metal for tests.
 - `WEBP_METAL_VERBOSE=1` prints the selected GPU and transform timing.
 
+Lossy RGB-to-YUV conversion has separate controls because its best use case is
+a persistent batch encoder:
+
+- `WEBP_METAL_LOSSY=0` disables the lossy Metal import path.
+- `WEBP_METAL_LOSSY_MIN_PIXELS=N` sets its threshold. The conservative default
+  is 80,000,000 pixels, which avoids runtime shader-compilation regressions in
+  ordinary one-shot CLI encodes. Use `0` in a batch process to reuse the cached
+  pipeline and buffers.
+- `WEBP_METAL_VERBOSE=1` also prints lossy conversion command timing.
+
+On the M4 Max, warmed `WebPPictureImportRGB` improved by 4.55x at 6 MP and
+4.95x at 12 MP. The lossy output is bit-identical to the CPU path. See
+`PERFORMANCE_LOG.md` for cold-start crossover data and rejected variants.
+
 ## Verify and benchmark
 
 ```sh
 scripts/test.sh
+scripts/test_lossy.sh /path/to/image.jpg [/path/to/another.png]
 scripts/benchmark.sh /path/to/image.png 5 6
+make benchmark-lossy-import
+WEBP_METAL_LOSSY=0 build/benchmark_lossy_import 4000 3000 30
+WEBP_METAL_LOSSY_MIN_PIXELS=0 build/benchmark_lossy_import 4000 3000 30
 ```
 
 `test.sh` encodes through both paths, decodes both files, and requires the

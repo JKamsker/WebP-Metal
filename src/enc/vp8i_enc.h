@@ -505,6 +505,13 @@ int WebPPictureAllocARGB(WebPPicture* const picture, int width, int height);
 // Returns false in case of error (invalid param, out-of-memory).
 int WebPPictureAllocYUVA(WebPPicture* const picture, int width, int height);
 
+// Converts an opaque interleaved RGB/BGR source into the already-allocated
+// YUV420 planes. Returns 1 when Metal produced the planes and 0 to request the
+// portable fallback.
+int WebPImportRGBToYUVAMetal(const uint8_t* r, const uint8_t* g,
+                             const uint8_t* b, int step, int rgb_stride,
+                             WebPPicture* picture);
+
 // Clean-up the RGB samples under fully transparent area, to help lossless
 // compressibility (no guarantee, though). Assumes that pic->use_argb is true.
 void WebPCleanupTransparentAreaLossless(WebPPicture* const pic);

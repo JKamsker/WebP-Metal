@@ -873,6 +873,17 @@ static int ImportYUVAFromRGBA(const uint8_t* r_ptr,
 #endif
   }
 
+#if defined(WEBP_USE_METAL)
+  // The Metal path currently covers the common opaque, non-dithered fast
+  // conversion. Alpha-weighted, sharp-YUV, and dithered conversions retain
+  // their existing behavior below.
+  if (!has_alpha && !use_iterative_conversion && dithering == 0.f &&
+      WebPImportRGBToYUVAMetal(r_ptr, g_ptr, b_ptr, step, rgb_stride,
+                               picture)) {
+    return 1;
+  }
+#endif
+
   if (use_iterative_conversion) {
     InitGammaTablesS();
     if (!PreprocessARGB(r_ptr, g_ptr, b_ptr, step, rgb_stride, picture)) {
