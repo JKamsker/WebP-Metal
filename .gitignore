@@ -1,0 +1,7 @@
+*.o
+*.a
+cwebp-metal
+dwebp-metal
+examples/cwebp
+examples/dwebp
+/tmp/
