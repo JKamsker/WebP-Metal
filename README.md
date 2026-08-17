@@ -3,7 +3,8 @@
 WebP-Metal is a macOS/Apple-silicon port of the CUDA lossless-encoding work in
 the CMU 15-418 final project at `/Users/jonas/Documents/15418-Final-Project`.
 It builds a real `cwebp` encoder and accelerates lossless cross-color search and
-lossy opaque RGB-to-YUV420 conversion with Metal compute kernels.
+lossy opaque RGB-to-YUV420 conversion with Metal compute kernels. On AArch64 it
+also backports libwebp's newer NEON intra4 prediction kernel.
 
 The port is intentionally not a line-for-line CUDA translation:
 
@@ -45,6 +46,10 @@ offline `metal` compiler and a full Xcode installation are not required.
 The optimized CLI enables libwebp multithreading by default. Use `-no_mt` for
 a single-thread baseline; `-mt` is still accepted explicitly. This does not
 change the public library's `WebPConfig` default.
+
+`WEBP_NEON_INTRA4=0` disables the arm64 intra4 predictor backport for A/B
+benchmarking. It is enabled by default and improves complete lossy encode time
+by roughly 0.4-2.4% on the measured set without changing the bitstream.
 
 Metal is enabled by default for images of at least 65,536 pixels. Environment
 controls:

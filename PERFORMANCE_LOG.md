@@ -127,6 +127,32 @@ Decision: **kept**. This changes only the optimized CLI default; callers of the
 libwebp API retain upstream `WebPConfig` defaults and control `thread_level`
 themselves.
 
+## Kept: AArch64 NEON intra4 prediction
+
+A two-second sample of a quality-75/method-6 lossy encode placed 1005 of 1047
+main-thread samples (96%) in `VP8EncTokenLoop`. Trellis quantization dominated,
+but the scalar `Intra4Preds_C` was also directly visible in the hot call tree.
+libwebp 1.6 has an AArch64 table-lookup NEON implementation absent from this
+1.0.3 fork, so that isolated kernel was backported and dispatched on arm64.
+
+Ten alternating complete CLI trials, with lossy Metal import disabled:
+
+| Input | Method | Scalar predictor | NEON predictor | Speedup |
+|---|---:|---:|---:|---:|
+| `corgi.jpeg` | 4 | 0.2931 s | 0.2885 s | **1.016x** |
+| `mitski.png` | 4 | 0.1298 s | 0.1274 s | **1.019x** |
+| `twinpeaks.jpg` | 4 | 0.5761 s | 0.5675 s | **1.015x** |
+| `corgi.jpeg` | 6 | 0.5453 s | 0.5418 s | **1.006x** |
+| `mitski.png` | 6 | 0.1918 s | 0.1873 s | **1.024x** |
+| `twinpeaks.jpg` | 6 | 1.1454 s | 1.1414 s | **1.004x** |
+
+CPU and NEON produced byte-identical WebP files at qualities 25/75/95 and
+methods 0/4/6 on three images. `WEBP_NEON_INTRA4=0` retains a benchmark/fallback
+switch.
+
+Decision: **kept**. The gain is small but consistent across all six measured
+cases, has no GPU startup cost, and preserves output exactly.
+
 ## Next opportunities
 
 - Profile lossy macroblock analysis, residual transforms, quantization, and
