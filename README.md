@@ -56,6 +56,10 @@ predictor backports for A/B benchmarking. They are enabled by default. Intra4
 improved complete lossy encode time by roughly 0.4-2.4% and intra16 by
 0.2-1.2% on the measured set without changing the bitstream.
 
+The method-6 trellis hot loop also includes an exact upstream scoring-work
+reduction, improving complete lossy encodes by 0.3-1.6% on the measured set.
+It has no GPU startup cost and produces byte-identical files.
+
 `WEBP_NEON_LOSSLESS_PREDICTORS=0` disables the arm64 lossless predictor 9-12
 micro-optimizations. They improved complete Metal-enabled lossless encoding by
 1.5-2.1% at method 4 on the measured set, with byte-identical output.

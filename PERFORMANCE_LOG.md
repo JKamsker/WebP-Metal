@@ -30,6 +30,7 @@ divided by accelerated time.
 | Multithreaded CLI default | Primarily lossy complete CLI | **1.04-1.08x** representative | Bitstream exact |
 | NEON intra4 prediction | Lossy complete CLI | **1.004-1.024x** | Bitstream exact |
 | NEON intra16 prediction | Lossy complete CLI | **1.002-1.012x** | Bitstream exact |
+| Reduced trellis scoring work | Lossy method-6 CLI | **1.003-1.016x** | Bitstream exact |
 | NEON predictors 9-12 | Lossless complete CLI | **0.998-1.021x** | Bitstream exact |
 
 ## Kept: lossless cross-color transform in Metal
@@ -189,6 +190,39 @@ CPU and NEON output was byte-identical at qualities 25/75/95 and methods
 
 Decision: **kept**. The 0.2-1.2% whole-encode gain is modest but consistent,
 has no initialization or transfer cost, and composes with the intra4 win.
+
+## Kept: reduced lossy trellis scoring work
+
+Profiling showed `TrellisQuantizeBlock` dominating the method-6 token loop.
+Moving individual 4x4 trellises to Metal would add dispatch/synchronization
+overhead and their neighboring-context dependencies prevent a simple
+whole-frame launch. Instead, upstream libwebp commit `93480160` was backported
+as a bounded exact experiment. It hoists a score shared by all predecessors,
+initializes the first predecessor outside the comparison loop, and avoids
+terminal-node cost work when the partial score is already worse.
+
+Eleven alternating complete quality-75 CLI trials, with lossy Metal import
+disabled in both binaries:
+
+| Input | Method | Before | Reduced scoring | Speedup |
+|---|---:|---:|---:|---:|
+| `layout.png` | 4 | 0.0329 s | 0.0331 s | 0.995x (noise/neutral) |
+| `mitski.png` | 4 | 0.1246 s | 0.1244 s | **1.002x** |
+| `corgi.jpeg` | 4 | 0.2891 s | 0.2877 s | **1.005x** |
+| `twinpeaks.jpg` | 4 | 0.5656 s | 0.5660 s | 0.999x (noise/neutral) |
+| `siamese.jpg` | 4 | 0.4147 s | 0.4143 s | **1.001x** |
+| `layout.png` | 6 | 0.0440 s | 0.0439 s | **1.003x** |
+| `mitski.png` | 6 | 0.1861 s | 0.1854 s | **1.004x** |
+| `corgi.jpeg` | 6 | 0.5447 s | 0.5420 s | **1.005x** |
+| `twinpeaks.jpg` | 6 | 1.1276 s | 1.1170 s | **1.010x** |
+| `siamese.jpg` | 6 | 0.6935 s | 0.6828 s | **1.016x** |
+
+Five images produced byte-identical files before and after the change at
+qualities 25/75/95 and methods 4/5/6 (45 combinations).
+
+Decision: **kept**. The method-6 gain is small but consistent, exact, has no
+startup cost, and specifically improves the dominant lossy hot loop. Method 4
+is expected to be neutral because it does not run full trellis optimization.
 
 ## Kept: AArch64 NEON lossless predictors 9-12
 
