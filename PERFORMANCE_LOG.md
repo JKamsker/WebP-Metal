@@ -35,6 +35,7 @@ divided by accelerated time.
 | Reduced trellis scoring work | Lossy method-6 CLI | **1.003-1.016x** | Bitstream exact |
 | Fixed-size trellis clears | Lossy method-5/6 CLI | **1.002-1.066x** | Bitstream exact |
 | NEON predictors 9-12 | Lossless complete CLI | **0.998-1.021x** | Bitstream exact |
+| Remove duplicate literal-histogram copy | Lossless complete CLI | **0.996-1.029x** | Bitstream exact |
 
 ## Kept: lossless cross-color transform in Metal
 
@@ -369,6 +370,35 @@ extraction overhead. Match scanning was neutral to 0.7% slower on meaningful
 inputs; most candidate chains reject before four pixels, so vector setup does
 not amortize. The original scalar code remains active.
 
+## Kept: remove duplicate literal-histogram copy
+
+`HistogramCopy` copied the complete variable-sized allocation and then copied
+the trailing literal-count array a second time after restoring its pointer.
+Upstream commit `be5af857` identifies the redundant traffic. Copying only the
+fixed structure in the first operation preserves the intended two-allocation
+layout and avoids copying the literal array twice.
+
+Nine alternating complete lossless trials with the final Metal defaults:
+
+| Input | Method | Before | Single literal copy | Speedup |
+|---|---:|---:|---:|---:|
+| `layout.png` | 4 | 0.1153 s | 0.1130 s | **1.021x** |
+| `mitski.png` | 4 | 0.4405 s | 0.4282 s | **1.029x** |
+| `corgi.jpeg` | 4 | 0.8746 s | 0.8744 s | 1.000x |
+| `siamese.jpg` | 4 | 1.4168 s | 1.4231 s | 0.996x |
+| `layout.png` | 6 | 0.05005 s | 0.05006 s | 1.000x |
+| `mitski.png` | 6 | 0.6072 s | 0.6030 s | **1.007x** |
+| `corgi.jpeg` | 6 | 1.1893 s | 1.1880 s | **1.001x** |
+| `siamese.jpg` | 6 | 1.7711 s | 1.7673 s | **1.002x** |
+
+Four images produced byte-identical files at every method from 0 to 6. The
+small method-4 Siamese regression is within the variability seen in these
+one-shot process timings; the operation removes memory traffic unconditionally
+and upstream measured 13 MB less copying for a 1600x1600 encode.
+
+Decision: **kept**, including the batch/memory-bandwidth benefit. The measured
+whole-encode effect is content-dependent rather than advertised as universal.
+
 ## Kept: exact lossless hash-chain matching with Metal
 
 Instrumentation separated the hash-table fill from the best-match traversal.
@@ -467,11 +497,33 @@ vectorizing its final 256-bin loop.
 
 ## Next opportunities
 
-- Profile lossy macroblock analysis, residual transforms, quantization, and
-  entropy coding; RGB conversion is a small fraction of complete encode time.
-- Investigate avoiding the remaining RGB input and planar output copies with
-  page-aligned/no-copy shared buffers in integrations that control allocation.
-- Profile lossless residual/predictor search and histogram clustering, which
-  now dominate after cross-color and hash-search acceleration.
-- Selectively evaluate newer libwebp NEON and encoder changes against this fork,
-  keeping only reproducible wins and preserving output/correctness invariants.
+1. Design a persistent-process lossy macroblock experiment. The final 4-second
+   profile still put roughly half of token-loop samples in
+   `TrellisQuantizeBlock`; a useful Metal design must batch work while respecting
+   reconstructed-neighbor and coefficient-context dependencies. Per-block GPU
+   dispatch is not viable.
+2. Prototype the newer upstream lossless histogram-clustering changes
+   (`a4183d94`, `00338240`, and `e53e2130`) one logical change at a time. They
+   remove or cache substantially more cost computation but require a larger
+   backport than the safe duplicate-copy fix retained above.
+3. Add a persistent-library end-to-end batch benchmark. The current harness
+   isolates warmed lossy import, while CLI benchmarks intentionally include
+   shader compilation. A library harness would refine the 4 MP lossless-hash
+   threshold and quantify whole-batch gains below it.
+4. Build offline `.metallib` assets when full Xcode is available. Removing the
+   roughly 20-25 ms runtime compilation cost should lower the profitable
+   one-shot thresholds, especially for lossy RGB import.
+5. Investigate page-aligned/no-copy shared input and planar output buffers for
+   integrations that control allocation, then measure memory and wall time.
+6. Add macOS arm64 CI covering lossy qualities 25/75/95, lossless methods 0-6,
+   near-lossless strengths, fallback thresholds, and byte/decode invariants.
+
+## Stopping point (2026-08-17)
+
+Both lossy and lossless encoding are accelerated. Current cumulative lossless
+CPU-versus-Metal speedup is 2.06-2.38x on the representative 4.5-9.2 MP set.
+The largest lossy GPU result is the warmed batch RGB-to-YUV stage at 4.55-4.95x;
+exact NEON and trellis improvements additionally reduce complete encode time.
+Every retained exact optimization has an A/B measurement and commit, while
+rejected experiments remain recorded above. `README.md` contains operational
+thresholds and test commands; this file is the experiment ledger and handoff.

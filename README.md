@@ -71,6 +71,11 @@ files.
 micro-optimizations. They improved complete Metal-enabled lossless encoding by
 1.5-2.1% at method 4 on the measured set, with byte-identical output.
 
+Lossless histogram copying no longer transfers the variable-length literal
+counts twice. Its complete-encode effect is content-dependent (0.996-1.029x in
+the measured set), but it unconditionally removes redundant memory traffic and
+is retained for persistent/batch workloads.
+
 Metal is enabled by default for images of at least 65,536 pixels. Environment
 controls:
 
