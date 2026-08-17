@@ -17,6 +17,19 @@ divided by accelerated time.
 - Keep batch-only improvements, but identify their initialization/amortization
   requirements and retain a safe one-shot fallback.
 
+## Current kept improvements
+
+| Improvement | Mode/scope | Measured result | Output invariant |
+|---|---|---:|---|
+| Metal cross-color transform | Lossless stage | **17.27-41.93x** | Decoded pixels exact; size -0.15% to +0.28% |
+| Metal cross-color transform | Complete lossless CLI | **1.69-1.76x** | Decoded pixels exact |
+| Metal RGB-to-YUV420 | Lossy warmed batch stage | **4.55-4.95x** | Bitstream exact |
+| Metal RGB-to-YUV420 | 178 MP cold stage / complete CLI | **1.63x / 1.005x** | Bitstream exact |
+| Multithreaded CLI default | Primarily lossy complete CLI | **1.04-1.08x** representative | Bitstream exact |
+| NEON intra4 prediction | Lossy complete CLI | **1.004-1.024x** | Bitstream exact |
+| NEON intra16 prediction | Lossy complete CLI | **1.002-1.012x** | Bitstream exact |
+| NEON predictors 9-12 | Lossless complete CLI | **0.998-1.021x** | Bitstream exact |
+
 ## Kept: lossless cross-color transform in Metal
 
 The first implementation replaces `VP8LColorSpaceTransform_C` with a
@@ -201,6 +214,33 @@ Decision: **kept**. Method 4 consistently gains 1.5-2.1%; method 6 is neutral
 to 0.7% faster. The single 0.2% negative is below timing resolution on a 50 ms
 palette-dominated encode and does not outweigh the repeatable larger-image
 benefit.
+
+## Profiled, not yet implemented
+
+### Lossy token/trellis loop
+
+A two-second quality-75/method-6 sample placed 1005 of 1047 main-thread samples
+inside `VP8EncTokenLoop`. `VP8Decimate` and `TrellisQuantizeBlock` dominate;
+the transform, distortion, and residual-cost helpers already dispatch to NEON
+in many cases. Trellis state and per-macroblock decisions are dependency-heavy,
+so moving only the arithmetic to Metal would risk command/transfer overhead.
+
+Status: **next major lossy research target**, not yet claimed as an
+improvement. A useful experiment needs a batched macroblock interface and an
+exact CPU fallback, followed by size/PSNR and total-time checks.
+
+### Lossless hash chain and entropy scoring
+
+After the Metal transform, a one-second method-6 sample placed 328 of 843
+main-thread samples in `VP8LHashChainFill` and 463 in residual/predictor search;
+221 samples were directly in `CombinedShannonEntropy_C`. The hash-chain match
+search walks data-dependent predecessor links and performs left-extension
+updates, making a bit-exact parallel translation non-trivial.
+
+Status: **next major lossless research target**. Candidate designs are an
+independent-position GPU match search (lossless pixels but potentially changed
+compression size) or a CPU/NEON entropy scorer. Neither has been implemented,
+so no speedup is attributed to them.
 
 ## Next opportunities
 
