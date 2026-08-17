@@ -31,6 +31,7 @@ divided by accelerated time.
 | NEON intra4 prediction | Lossy complete CLI | **1.004-1.024x** | Bitstream exact |
 | NEON intra16 prediction | Lossy complete CLI | **1.002-1.012x** | Bitstream exact |
 | Reduced trellis scoring work | Lossy method-6 CLI | **1.003-1.016x** | Bitstream exact |
+| Fixed-size trellis clears | Lossy method-5/6 CLI | **1.002-1.066x** | Bitstream exact |
 | NEON predictors 9-12 | Lossless complete CLI | **0.998-1.021x** | Bitstream exact |
 
 ## Kept: lossless cross-color transform in Metal
@@ -223,6 +224,33 @@ qualities 25/75/95 and methods 4/5/6 (45 combinations).
 Decision: **kept**. The method-6 gain is small but consistent, exact, has no
 startup cost, and specifically improves the dominant lossy hot loop. Method 4
 is expected to be neutral because it does not run full trellis optimization.
+
+## Kept: fixed-size trellis coefficient clearing
+
+The adjacent upstream `1a8f0d45` optimization was tested separately. The old
+code cleared either 15 or 16 coefficients using a runtime-derived pointer and
+length. Apple Clang emitted two calls to `bzero` for every trellis block. An
+explicit branch between the fixed 30-byte and 32-byte layouts lets the compiler
+inline both clears as stores; disassembly confirms that the two calls disappear.
+
+Fifteen alternating quality-75/method-6 complete CLI trials:
+
+| Input | Runtime-sized clears | Fixed-size clears | Speedup |
+|---|---:|---:|---:|
+| `layout.png` | 0.04350 s | 0.04080 s | **1.066x** |
+| `mitski.png` | 0.18470 s | 0.17364 s | **1.064x** |
+| `corgi.jpeg` | 0.53974 s | 0.52194 s | **1.034x** |
+| `twinpeaks.jpg` | 1.11488 s | 1.08657 s | **1.026x** |
+| `siamese.jpg` | 0.68313 s | 0.65248 s | **1.047x** |
+
+Method 5 also improved in eleven alternating trials: 1.017x on Layout, 1.015x
+on Mitski, and 1.002-1.005x on the other three inputs. The effect is larger at
+method 6 because full trellis optimization invokes the clearing path far more
+often. Five images produced byte-identical files at qualities 25/75/95 and
+methods 4/5/6 (45 combinations).
+
+Decision: **kept**. This removes hot-loop function calls, is exact, and provides
+a surprisingly material 2.6-6.6% method-6 whole-encoder gain on this machine.
 
 ## Kept: AArch64 NEON lossless predictors 9-12
 

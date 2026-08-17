@@ -724,8 +724,14 @@ static int TrellisQuantizeBlock(const VP8Encoder* const enc,
   }
 
   // Fresh start
-  memset(in + first, 0, (16 - first) * sizeof(*in));
-  memset(out + first, 0, (16 - first) * sizeof(*out));
+  // Preserve coefficient zero for the intra16 AC layout.
+  if (coeff_type == 0) {
+    memset(in + 1, 0, 15 * sizeof(*in));
+    memset(out + 1, 0, 15 * sizeof(*out));
+  } else {
+    memset(in, 0, 16 * sizeof(*in));
+    memset(out, 0, 16 * sizeof(*out));
+  }
   if (best_path[0] == -1) {
     return 0;   // skip!
   }
